@@ -14,6 +14,7 @@
 
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import type { MediaTag } from '@/features/reports/draft';
 import { loadTasks, saveTasks } from './uploadQueuePersistence';
 import { getUploadErrorMessage, uploadMedia } from './upload';
@@ -62,6 +63,11 @@ const patch = (id: string, update: Partial<UploadTask>) => {
   schedulePersist();
 };
 
+/** Обновление без записи в IndexedDB: прогресс загрузки не переживает перезагрузку (гидратация сбрасывает его в 0),
+ * а запись полного массива с blob при каждом тике — это сотни МБ структурированного клона впустую (MINI-23). */
+const patchNoPersist = (id: string, update: Partial<UploadTask>) =>
+  useUploadQueue.setState((state) => ({ tasks: state.tasks.map((task) => (task.id === id ? { ...task, ...update } : task)) }));
+
 /** Дебаунс-сохранение полного массива задач в IndexedDB (MINI-23). Изменения стору во время тика воркера частые. */
 function schedulePersist() {
   if (persistTimer) clearTimeout(persistTimer);
@@ -85,11 +91,15 @@ async function runTask(id: string) {
       sectionId: task.sectionId,
       blob: task.blob,
       contentType: task.contentType,
-      onProgress: (fraction) => patch(id, { progress: fraction }),
+      onProgress: (fraction) => patchNoPersist(id, { progress: fraction }),
       onStage: (stage) => patch(id, { state: stage === 'put' ? 'uploading' : stage === 'confirm' ? 'confirming' : 'presigning' }),
       resume: task.resume,
     });
     patch(id, { state: 'done', s3Key: result.s3Key, progress: 1, lastError: undefined });
+    // Готовое видео не держим ни в памяти, ни в IndexedDB: blob больше не нужен (правило из uploadQueueRules)
+    if (task.kind === 'VIDEO') {
+      useUploadQueue.getState().releaseBlob(id);
+    }
   } catch (error) {
     const action = classifyFailure(error);
     if (action.action === 'cancelled') {
@@ -98,15 +108,17 @@ async function runTask(id: string) {
     }
     if (action.action === 'auth') {
       patch(id, { state: 'failed', lastError: 'Сессия истекла. Войдите заново' });
-      return;
-    }
-    if (action.action === 'retry') {
+    } else if (action.action === 'retry') {
       const resume = error instanceof Error && 'state' in error ? (error as unknown as { state: UploadTask['resume'] }).state : undefined;
       const attempts = task.attempts + 1;
       patch(id, { state: 'queued', lastError: getUploadErrorMessage(error), resume, attempts, nextAttemptAt: Date.now() + backoffDelay(attempts) });
     } else {
       patch(id, { state: 'failed', lastError: getUploadErrorMessage(error) });
     }
+  } finally {
+    // Освободили слот параллельности: подхватить следующую задачу из очереди (иначе после MAX_PARALLEL_PHOTOS
+    // воркер застрянет до внешнего enqueue/hydrate/online — критично для докачки после перезагрузки, MINI-23)
+    void kick();
   }
 }
 
@@ -210,8 +222,9 @@ export async function requestPersistentStorage(): Promise<void> {
 /**
  * Гидратация очереди при старте (MINI-23): восстановить задачи из IndexedDB и продолжить докачку.
  * Задачи в `presigning/uploading/confirming` на момент закрытия Mini App возвращаются в `queued` (в S3 они не ушли
- * целиком или confirm под вопросом), кроме `confirming` с известным `s3Key` — для неё сначала проверка через `GET`
- * (правило MINI-10) делается внутри `uploadMedia` при повторе. Вызывается один раз после старта приложения.
+ * целиком или confirm под вопросом). `resume` сбрасывается: шаг-состояние прошлой попытки не сохранялся в IDB,
+ * поэтому незавершённый файл загружается заново целиком — это безопасно (presigned URL создаётся каждый раз,
+ * в S3 не остаётся лишних объектов, дублей в отчёте нет). Вызывается один раз после старта приложения.
  */
 export async function hydrateUploadQueue(): Promise<void> {
   const stored = await loadTasks();
@@ -250,15 +263,14 @@ export function useUploadQueueResume() {
 
 /** Сводка для индикатора в шапке мастера: «Загружается N из M». */
 export function useUploadQueueSummary() {
-  // Считаем снаружи: возвращать новый объект из селектора зацикливает рендер (zustand сравнивает по ссылке)
-  const tasks = useUploadQueue((state) => state.tasks);
-  return summarize(tasks);
+  // Считаем внутри селектора с useShallow: подписка на весь массив re-рендерит на каждом progress-тике, а нам
+  // важны только переходы состояния; сводка меняется редко, поэтому глубокое сравнение стабилизирует рендер
+  return useUploadQueue(useShallow((state) => summarize(state.tasks)));
 }
 
 /** Есть ли незавершённые задачи — для подтверждения закрытия приложения и баннера «Не закрывайте». */
 export function useHasPendingUploads() {
-  const tasks = useUploadQueue((state) => state.tasks);
-  return hasPendingWork(tasks);
+  return useUploadQueue(useShallow((state) => hasPendingWork(state.tasks)));
 }
 
 // Открываем внутренние функции для тестов, не загрязняя публичное API.

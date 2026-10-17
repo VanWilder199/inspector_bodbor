@@ -21,7 +21,8 @@ import { toReportHeader, toReportViewData } from '@/features/reports/reportViewD
 import { buildReviewChecklist } from '@/features/reports/reviewChecklist';
 import { avbyUrlOf } from '@/features/reports/useReport';
 import { useInspector } from '@/features/inspector/useInspector';
-import { useHasPendingUploads } from '@/media/uploadQueue';
+import { useHasPendingUploads, useUploadQueue } from '@/media/uploadQueue';
+import { hasPendingWork } from '@/media/uploadQueueRules';
 import { useMainButton } from '@/telegram/useMainButton';
 
 const HINT_COLOR = 'var(--tgui--hint_color)';
@@ -45,9 +46,10 @@ export function ReviewStepPage() {
     const prepare = async () => {
       setRefreshing(true);
       try {
-        // ожидаем, пока очередь загрузок опустеет (не более разумного времени)
+        // ожидаем, пока очередь загрузок опустеет (не более разумного времени). Читаем живое состояние стора:
+        // застывшее из замыкания значение заставило бы ждать весь лимит, даже когда загрузки уже закончились
         let waited = 0;
-        while (hasPendingUploads && waited < 10_000) {
+        while (hasPendingWork(useUploadQueue.getState().tasks) && waited < 10_000) {
           await new Promise((resolve) => setTimeout(resolve, 250));
           waited += 250;
         }

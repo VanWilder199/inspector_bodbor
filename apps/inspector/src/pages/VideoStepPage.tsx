@@ -17,6 +17,7 @@ import { useNavigate, useOutletContext, useParams } from 'react-router';
 import type { ReportContext } from '@/features/reports/ReportLayout';
 import { nextStepPath } from '@/features/reports/wizardSteps';
 import { useUploadQueue, checkUploadQuota } from '@/media/uploadQueue';
+import { UPLOAD_STATE_LABELS, hasPendingWork } from '@/media/uploadQueueRules';
 import { VIDEO_LENGTH_HINT, checkVideoFile } from '@/media/videoCheck';
 import { useMainButton } from '@/telegram/useMainButton';
 
@@ -74,8 +75,10 @@ export function VideoStepPage() {
     navigate(next ? `/reports/${id}/${next}` : `/reports/${id}`);
   });
 
-  const uploading = latestVideo && (latestVideo.state === 'queued' || latestVideo.state === 'presigning' || latestVideo.state === 'uploading' || latestVideo.state === 'confirming');
+  const uploading = latestVideo !== undefined && hasPendingWork([latestVideo]);
   const done = latestVideo?.state === 'done';
+  const failed = latestVideo?.state === 'failed';
+  const stateLabel = latestVideo ? UPLOAD_STATE_LABELS[latestVideo.state] : 'Видео';
 
   return (
     <main style={{ padding: 16 }}>
@@ -92,7 +95,7 @@ export function VideoStepPage() {
         <Section header="Видео">
           <Cell
             after={
-              <Button size="m" disabled={!editable || (latestVideo !== undefined && latestVideo.state !== 'done' && latestVideo.state !== 'failed')} onClick={pick}>
+              <Button size="m" disabled={!editable || uploading} onClick={pick}>
                 {done ? 'Заменить видео' : 'Снять видео'}
               </Button>
             }
@@ -101,12 +104,12 @@ export function VideoStepPage() {
                 ? `Загружается… ${Math.round((latestVideo?.progress ?? 0) * 100)}%`
                 : done
                   ? 'Видео загружено, обработка может занять время'
-                  : latestVideo?.state === 'failed'
-                    ? `Ошибка: ${latestVideo.lastError ?? 'неизвестно'}`
+                  : failed
+                    ? `Ошибка: ${latestVideo?.lastError ?? 'неизвестно'}`
                     : 'Видео ещё не добавлено'
             }
           >
-            {done ? 'Загружено' : uploading ? 'Идёт загрузка' : latestVideo?.state === 'failed' ? 'Не удалось загрузить' : 'Видео'}
+            {stateLabel}
           </Cell>
         </Section>
       </List>

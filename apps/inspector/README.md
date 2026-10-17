@@ -20,6 +20,54 @@ npm run test -w @podbor/inspector
 npm run build -w @podbor/inspector
 ```
 
+## Локальный запуск в Telegram через туннель (MINI-04)
+
+Чтобы открыть локальный Mini App на реальном телефоне в Telegram:
+
+1. **Dev-бот в BotFather.** Создайте/возьмите бота и получите токен. **Внимание (gotcha 1):** у бэкенда
+   `TELEGRAM_BOT_TOKEN` должен быть именно этого dev-бота, а не тестовый токен из `application-local.yml` —
+   иначе подпись initData не сойдётся. В BotFather задайте Menu Button с адресом вашего туннеля (раздел Mini App).
+
+2. **Запустите Vite через туннель:**
+   ```bash
+   npm run tunnel -w @podbor/inspector     # тот же vite, но VITE_TUNNEL=1
+   cloudflared tunnel --url http://localhost:5175
+   ```
+   Получите `https://<random>.trycloudflare.com`. Скрипт `tunnel` включает `allowedHosts` для trycloudflare/ngrok
+   и `hmr.clientPort: 443`, чтобы HMR работал через туннель. Без этого Vite 6 отвечает 403 на чужой Host.
+
+3. **Пропишите URL туннеля** в `MINIAPP_URL` бота (`bot/.env`) — Menu Button обновится при рестарте.
+
+4. **Debug на телефоне:** iOS — «Настройки» → 10 тапов по версии → Allow Web View Inspection → Safari → Develop.
+   Android — долгий тап по версии Telegram → Enable WebView Debug → `chrome://inspect`. В dev-сборке (не в моках)
+   доступен `eruda` (отладчик), в prod-сборке его нет.
+
+### Проблема S3 / mixed content
+
+HTTPS-страница Mini App **не может** сделать PUT на `http://localhost:9000` (mixed content), а телефон не достучится
+до `localhost` компьютера. Чтобы проверить загрузку медиа на телефоне, нужен **отдельный туннель на MinIO**:
+
+```bash
+docker compose --profile local up -d minio
+cloudflared tunnel --url http://localhost:9000
+```
+
+и на бэкенде `S3_ENDPOINT=https://<minio-tunnel>` (подпись включает `host`, URL должен совпадать с тем, куда пойдёт
+браузер) + CORS бакета должен разрешать origin туннеля Mini App (см. `deploy/minio/cors.json`). Без BE-17
+(разделение публичного/внутреннего S3-endpoint) это временный ручной туннель. Без него работают только JSON-эндпоинты
+(`GET /inspector/` и пр.).
+
+### Альтернатива — тестовое окружение Telegram
+
+Отдельный аккаунт в тестовом DC (iOS: 10 тапов «Настройки» → Accounts → Login to another account → Test;
+Desktop: Shift+Alt+правый клик по «Добавить аккаунт»), бот через тестового `@BotFather`. Mini App можно открывать
+по `http://127.0.0.1:5175` в Telegram Desktop. Бот ходит в `https://api.telegram.org/bot<token>/test/<method>`
+при `TELEGRAM_TEST_ENV=true`. Требует поддержки test-окружения в бэкенде (BE-16).
+
+### Альтернатива — браузер без Telegram
+
+`npm run dev:mocks` + `mockTelegramEnv` — для вёрстки и логики без телефона (см. MINI-02).
+
 ## Оффлайн-устойчивость (MINI-21)
 
 Приложение различает три состояния сети (стор `src/network/networkStore.ts`):

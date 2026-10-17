@@ -52,6 +52,17 @@ async function bootstrap() {
   const { hydrateUploadQueue } = await import('./media/uploadQueue');
   void hydrateUploadQueue();
 
+  // eruda — отладчик на телефоне, только dev (MINI-04). `import.meta.env.DEV` вырезает это из prod-сборки.
+  // eruda грузится с CDN и кладёт себя в `window.eruda`; npm-пакета нет, поэтому `import('eruda')` не используется.
+  if (import.meta.env.DEV && !import.meta.env.VITE_API_MOCKS) {
+    const script = document.createElement('script');
+    script.src = '//cdn.jsdelivr.net/npm/eruda';
+    document.head.appendChild(script);
+    script.onload = () => {
+      (window as unknown as { eruda?: { init: () => void } }).eruda?.init();
+    };
+  }
+
   // Моки API (MSW) — только в dev и только с флагом (`npm run dev:mocks`): под `import.meta.env.DEV` Vite вырезает
   // этот импорт из prod-сборки целиком. Запускаем до первого рендера: первые запросы уже должны идти через моки
   if (import.meta.env.DEV && import.meta.env.VITE_API_MOCKS === '1') {

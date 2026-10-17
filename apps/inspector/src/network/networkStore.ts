@@ -35,13 +35,13 @@ export const useNetworkState = create<NetworkStore>((set) => ({
       if (current.state === 'online') return { state: 'degraded' };
       return {};
     }),
-  setOnline: () => set({ state: 'online' }),
+  setOnline: () =>
+    set((current) => {
+      // No-op, если уже online: не дёргаем подписчиков (OfflineBanner, CreateReportPage) на каждом успешном запросе
+      if (current.state === 'online') return {};
+      return { state: 'online' };
+    }),
 }));
-
-/** Подписка на события интерфейса: offline-событие — сразу offline; online — online (запрос сам подтвердит доступность). */
-export function useNetworkEvents() {
-  return useNetworkState;
-}
 
 /** Удобный булев флаг для блокировки действий: offline или degraded — «нет сети». */
 export function useOffline() {

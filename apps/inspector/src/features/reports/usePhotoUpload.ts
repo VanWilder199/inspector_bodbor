@@ -43,6 +43,8 @@ export function usePhotoUpload() {
   const [error, setError] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Замок от повторного нажатия «Загрузить», пока проверка квоты/постановка в очередь не завершится (double-enqueue)
+  const submittingRef = useRef(false);
 
   /** Открыть выбор фото (камера или галерея). `capture` — съёмка, без него — галерея. */
   const openPicker = useCallback((options: PickPhotoOptions, capture?: 'environment') => {
@@ -71,24 +73,29 @@ export function usePhotoUpload() {
   /** Подтвердить загрузку: проверить квоту и поставить в очередь. Возвращает `true`, если файл принят в очередь. */
   const confirm = useCallback(
     async (options: PickPhotoOptions) => {
-      if (!pending) return false;
-      const quotaError = await checkUploadQuota();
-      if (quotaError) {
-        setError(quotaError);
-        return false;
+      if (!pending || submittingRef.current) return false;
+      submittingRef.current = true;
+      try {
+        const quotaError = await checkUploadQuota();
+        if (quotaError) {
+          setError(quotaError);
+          return false;
+        }
+        const { reportId, sectionId, kind, tag } = options;
+        enqueue({
+          reportId,
+          sectionId,
+          kind,
+          contentType: pending.photo.contentType,
+          ...(tag ? { tag } : {}),
+          blob: pending.photo.blob,
+          thumb: pending.photo.thumb.blob,
+        });
+        setPending(null);
+        return true;
+      } finally {
+        submittingRef.current = false;
       }
-      const { reportId, sectionId, kind, tag } = options;
-      enqueue({
-        reportId,
-        sectionId,
-        kind,
-        contentType: pending.photo.contentType,
-        ...(tag ? { tag } : {}),
-        blob: pending.photo.blob,
-        thumb: pending.photo.thumb.blob,
-      });
-      setPending(null);
-      return true;
     },
     [pending, enqueue],
   );

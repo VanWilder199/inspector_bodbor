@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:mocks": "VITE_API_MOCKS=1 vite",
+    "tunnel": "VITE_TUNNEL=1 vite",
     "build": "tsc --noEmit -p . && vite build",
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run",

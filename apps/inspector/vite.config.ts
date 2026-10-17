@@ -10,9 +10,11 @@ export default defineConfig({
   server: {
     // 5173 — web, 5174 — admin
     port: 5175,
-    // Заготовка под туннель (MINI-04): сюда добавится '.trycloudflare.com' — без него Vite 6 отвечает 403 на чужой Host.
-    // Рядом же появится `hmr: { clientPort: 443 }`; сейчас его нет, иначе HMR сломается при локальном http.
-    allowedHosts: [],
+    // Туннель (MINI-04): при `VITE_TUNNEL=1` (`npm run tunnel`) разрешаем trycloudflare-хосты и включаем HMR через
+    // 443 — иначе Vite 6 отвечает 403 на чужой Host, а HMR по http-туннелю не проходит. Локально без флага HMR
+    // работает по http, поэтому `clientPort` тут не задаём.
+    allowedHosts: process.env.VITE_TUNNEL ? ['.trycloudflare.com', '.ngrok-free.app'] : [],
+    hmr: process.env.VITE_TUNNEL ? { clientPort: 443 } : undefined,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
