@@ -4,6 +4,7 @@ import '@telegram-apps/telegram-ui/dist/styles.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createQueryClient } from './api/queryClient';
+import { setupQueryPersist } from './api/queryPersist';
 import { setApiSession } from './api/session';
 import { NotInTelegramPage } from './pages/NotInTelegramPage';
 import { initTelegram } from './telegram/init';
@@ -12,6 +13,8 @@ import { TelegramAppRoot } from './telegram/TelegramAppRoot';
 import './index.css';
 
 const queryClient = createQueryClient();
+// Кеш профиля и открытых отчётов переживает закрытие Mini App (MINI-21)
+setupQueryPersist(queryClient);
 
 async function bootstrap() {
   const root = createRoot(document.getElementById('root')!);
@@ -44,6 +47,10 @@ async function bootstrap() {
   // Брошенные чистые черновики (старше 30 дней) — на старте; грязные не трогаются никогда (раздел 3.3, п. 8)
   const { pruneStaleDrafts } = await import('./features/reports/draft');
   pruneStaleDrafts();
+
+  // Очередь загрузок: восстановить недогруженные файлы из IndexedDB и продолжить докачку (MINI-23)
+  const { hydrateUploadQueue } = await import('./media/uploadQueue');
+  void hydrateUploadQueue();
 
   // Моки API (MSW) — только в dev и только с флагом (`npm run dev:mocks`): под `import.meta.env.DEV` Vite вырезает
   // этот импорт из prod-сборки целиком. Запускаем до первого рендера: первые запросы уже должны идти через моки

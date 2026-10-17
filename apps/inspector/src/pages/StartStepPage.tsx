@@ -103,7 +103,7 @@ export function StartStepPage() {
           <Cell
             after={
               <div style={{ display: 'flex', gap: 8 }}>
-                <Button size="s" onClick={() => confirm({ reportId: id, sectionId: null, kind: 'PHOTO', tag: pending.tag })}>
+                <Button size="s" onClick={() => void confirm({ reportId: id, sectionId: null, kind: 'PHOTO', tag: pending.tag })}>
                   Загрузить
                 </Button>
                 <Button size="s" mode="bezeled" onClick={cancel}>

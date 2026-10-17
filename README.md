@@ -10,6 +10,8 @@
 | `apps/inspector` | Telegram Mini App подборщика (`@podbor/inspector`), Vite + React 19 + `@telegram-apps/telegram-ui` |
 | `bot/` | Тонкий aiogram-бот: `/start`, `/new_report`, deep links, кнопки открытия Mini App |
 | `packages/ui` | Общий UI-пакет `@podbor/ui` (превью `ReportView`, примитивы), зависимость Mini App |
+| `deploy/` | nginx-конфиг и MinIO CORS для `docker compose` (BOT-04) |
+| `docker-compose.yml` | Бот + статика Mini App + MinIO для локалки (профиль `local`) |
 | `agent-tasks/miniapp/` | Разбивка задач на MINI-01…23 и BOT-01…04 (план и шаги) |
 | `PLAN_FRONTEND_MINIAPP.md` | Исходный план Mini App и бота (из репозитория бэкенда) |
 
@@ -37,6 +39,21 @@ cp .env.example .env   # заполнить TELEGRAM_BOT_TOKEN и MINIAPP_URL
 python -m app          # long polling
 ```
 
+### Docker Compose (BOT-04)
+
+Поднимает nginx со статикой Mini App (`apps/inspector/dist`, нужно собрать заранее), бота и (в профиле `local`) MinIO
+с бакетом и CORS для локальной разработки.
+
+```bash
+cp .env.example .env   # заполнить TELEGRAM_BOT_TOKEN и PUBLIC_HOST
+npm run build -w @podbor/inspector
+docker compose up -d                                          # nginx + bot (+ api)
+docker compose --profile local up -d minio minio-init        # локальное S3-хранилище
+```
+
+- nginx раздаёт SPA (fallback на `index.html`, `index.html` без кеша, ассеты с хешами — долгий кеш) и проксирует `/api/` → `api:8080`.
+- MinIO — только локальная разработка (`--profile local`), в проде используется внешний S3.
+
 ## Что реализовано
 
 MVP-путь «регистрация → создание отчёта → заполнение → отправка на модерацию»:
@@ -47,9 +64,12 @@ MVP-путь «регистрация → создание отчёта → за
 - MINI-14 — видео обхода (глобальное, строго `sectionId=null` + `kind=VIDEO`, проверка типа/размера, подсказка для iPhone `.MOV`).
 - MINI-16 — заключение и цена (конвертация BYN↔копейки в одном месте).
 - MINI-17 — проверка и отправка: чек-лист по серверным данным, превью `ReportView`, `submit`, экран «Отправлено».
+- MINI-21 — оффлайн-устойчивость: стор сети (online/offline/degraded), баннер, `persistQueryClient`, `networkMode: 'offlineFirst'`, блокировка создания отчёта без сети.
+- MINI-23 — очередь загрузок в IndexedDB: задачи переживают закрытие Mini App, гидратация при старте, проверка квоты, `navigator.storage.persist()`.
 - BOT-01, BOT-02 — каркас бота, deep links.
+- BOT-04 — `docker-compose` (nginx + бот + MinIO для локалки), деплой статики.
 
-Проверено: **499 тестов** Mini App, **50 тестов** бота, `typecheck` и `build` зелёные (Node 22).
+Проверено: **514 тестов** Mini App, **50 тестов** бота, `typecheck` и `build` зелёные (Node 22).
 
 ## Заблокировано бэкендом (не реализовано здесь)
 

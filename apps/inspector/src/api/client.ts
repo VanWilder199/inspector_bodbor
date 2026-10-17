@@ -8,6 +8,7 @@
  */
 
 import { getRawInitData } from './session';
+import { useNetworkState } from '@/network/networkStore';
 
 const API_BASE = '/api';
 
@@ -136,14 +137,22 @@ export async function apiFetch<T = void>(path: string, options: ApiRequestInit =
     text = await res.text();
   } catch (e) {
     if (isAbortError(e)) {
-      if (timedOut) throw new ApiError(0, undefined, 'Request timeout', undefined, e, 'timeout');
+      if (timedOut) {
+        useNetworkState.getState().setDegraded();
+        throw new ApiError(0, undefined, 'Request timeout', undefined, e, 'timeout');
+      }
       throw e;
     }
+    // Реальный признак офлайна: сеть есть, а сервер недоступен (раздел 3.6)
+    useNetworkState.getState().setDegraded();
     throw new ApiError(0, undefined, 'Network error', undefined, e, 'network');
   } finally {
     clearTimeout(timer);
     outerSignal?.removeEventListener('abort', abortFromOutside);
   }
+
+  // Успешный ответ подтверждает доступность сервера
+  useNetworkState.getState().setOnline();
 
   if (res.ok) {
     if (text === '') return undefined as T;

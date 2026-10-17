@@ -1,0 +1,18 @@
+{
+  "AllowedOrigins": [
+    "https://app.site.by",
+    "https://*.trycloudflare.com"
+  ],
+  "AllowedMethods": [
+    "PUT",
+    "GET",
+    "HEAD"
+  ],
+  "AllowedHeaders": [
+    "content-type"
+  ],
+  "ExposeHeaders": [
+    "ETag"
+  ],
+  "MaxAgeSeconds": 300
+}

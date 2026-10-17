@@ -1,0 +1,88 @@
+# Docker Compose для Telegram Mini App подборщика и бота (BOT-04, раздел 4.5 плана).
+#
+# Состав:
+#   - nginx  — раздаёт собранную статику Mini App (apps/inspector/dist) + проксирует /api/ на бэкенд
+#   - bot    — тонкий aiogram-бот (без сети до api: ему не нужен)
+#   - minio (+ minio-init) — ТОЛЬКО локальная разработка: S3-совместимое хранилище с бакетом и CORS
+#
+# MinIO активируется только через profile "local" (gotcha 1: не смешивать окружения в одном файле).
+# В проде используется внешний S3 (hoster.by), MinIO здесь не поднимается.
+#
+# Переменные окружения (заполнить в корневом .env):
+#   TELEGRAM_BOT_TOKEN, BOT_USERNAME, PUBLIC_HOST, MINIAPP_URL (опционально переопределяет)
+
+name: inspector-bodbor
+
+services:
+  # Статика Mini App + прокси на api. Обновляется независимо от бота.
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+    ports:
+      - "${APP_PORT:-8081}:80"
+    volumes:
+      - ./deploy/nginx/inspector.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./apps/inspector/dist:/usr/share/nginx/html:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # Тонкий бот: ходит только в Telegram API, сеть до api не нужна (gotcha 3).
+  bot:
+    build: ./bot
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?задайте TELEGRAM_BOT_TOKEN в .env}
+      MINIAPP_URL: ${MINIAPP_URL:-https://app.${PUBLIC_HOST:?задайте PUBLIC_HOST в .env}}
+      MINIAPP_DIRECT_LINK: ${MINIAPP_DIRECT_LINK:-https://t.me/${BOT_USERNAME:-inspector_bodbor_bot}/app}
+      TELEGRAM_TEST_ENV: ${TELEGRAM_TEST_ENV:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ---- Только локальная разработка: S3 с бакетом и CORS (поднимется с `docker compose --profile local up`) ----
+  minio:
+    profiles: ["local"]
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+
+  minio-init:
+    profiles: ["local"]
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}; do sleep 1; done &&
+      mc mb -p local/${S3_BUCKET:-inspector-bodbor} &&
+      mc cors set local/${S3_BUCKET:-inspector-bodbor} /cors.json &&
+      echo 'MinIO бакет и CORS настроены'
+      "
+    volumes:
+      - ./deploy/minio/cors.json:/cors.json:ro
+
+  api:
+    # Сервис бэкенда — общее предусловие (не часть BOT-04). Образ и порт ожидаемо соответствуют бэкенду.
+    image: ${API_IMAGE:-backend-podbor-api:latest}
+    environment:
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_BUCKET: ${S3_BUCKET:-inspector-bodbor}
+      PUBLIC_HOST: ${PUBLIC_HOST:?задайте PUBLIC_HOST в .env}
+    restart: unless-stopped
+
+volumes:
+  minio-data:

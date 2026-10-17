@@ -16,7 +16,7 @@ import { useRef, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router';
 import type { ReportContext } from '@/features/reports/ReportLayout';
 import { nextStepPath } from '@/features/reports/wizardSteps';
-import { useUploadQueue } from '@/media/uploadQueue';
+import { useUploadQueue, checkUploadQuota } from '@/media/uploadQueue';
 import { VIDEO_LENGTH_HINT, checkVideoFile } from '@/media/videoCheck';
 import { useMainButton } from '@/telegram/useMainButton';
 
@@ -58,7 +58,13 @@ export function VideoStepPage() {
         return;
       }
       if (check.warning) setWarning(check.warning);
-      enqueue({ reportId: id, sectionId: null, kind: 'VIDEO', contentType: check.contentType, blob: file });
+      void checkUploadQuota().then((quotaError) => {
+        if (quotaError) {
+          setError(quotaError);
+          return;
+        }
+        enqueue({ reportId: id, sectionId: null, kind: 'VIDEO', contentType: check.contentType, blob: file });
+      });
     };
     input.click();
   };

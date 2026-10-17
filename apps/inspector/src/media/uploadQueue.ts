@@ -1,27 +1,32 @@
 /*
- * Очередь загрузок в памяти (MVP, PLAN_FRONTEND_MINIAPP.md, раздел 3.4, задача MINI-11).
+ * Очередь загрузок (PLAN_FRONTEND_MINIAPP.md, раздел 3.4, задачи MINI-11 и MINI-23).
  *
- * Задачи лежат только в памяти (zustand без `persist`): закрыли Mini App — очередь пропала, файлы нужно выбрать
- * заново. IndexedDB, квота и восстановление после закрытия — второй этап, задача MINI-23. Правила параллельности,
- * backoff и разбора ошибок — чистые функции в `uploadQueueRules.ts`, здесь — стор и цикл воркера.
+ * zustand-стор — источник истины для UI (реактивный, быстрый); задачи зеркалятся в IndexedDB (MINI-23), чтобы загрузки
+ * переживали закрытие Mini App. Правила параллельности, backoff и разбора ошибок — чистые функции в
+ * `uploadQueueRules.ts`, хранение — в `uploadQueuePersistence.ts`, здесь — стор, цикл воркера и гидратация.
  *
  * Воркер — один шаг `kick()`: ставит в полёт всё, что можно сейчас. Пока `uploadMedia` выполняется, задача в
  * `presigning/uploading/confirming` и в `pickRunnable` не попадёт; после ответа воркер `kick()` снова, чтобы
  * подхватить следующую. Сбой или backoff одной задачи другие не блокируют.
+ *
+ * В средах без IndexedDB (happy-dom в тестах) персистентность выключается сама, очередь живёт только в памяти.
  */
 
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
 import type { MediaTag } from '@/features/reports/draft';
+import { loadTasks, saveTasks } from './uploadQueuePersistence';
 import { getUploadErrorMessage, uploadMedia } from './upload';
 import {
   backoffDelay,
   classifyFailure,
   hasPendingWork,
+  isActive,
   nextWakeAt,
   pickRunnable,
   summarize,
   type UploadTask,
+  type UploadTaskState,
 } from './uploadQueueRules';
 
 export interface EnqueueInput {
@@ -38,6 +43,8 @@ export interface EnqueueInput {
 
 export interface UploadQueueApi {
   tasks: UploadTask[];
+  /** Ошибка квоты IndexedDB: новые файлы не принимаются, пока очередь не разгрузится. */
+  quotaError: string | null;
   enqueue: (input: EnqueueInput) => void;
   retry: (id: string) => void;
   remove: (id: string) => void;
@@ -48,9 +55,22 @@ export interface UploadQueueApi {
 let batchCounter = 0;
 let wakeTimer: ReturnType<typeof setTimeout> | null = null;
 let pending = false;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
-const patch = (id: string, update: Partial<UploadTask>) =>
+const patch = (id: string, update: Partial<UploadTask>) => {
   useUploadQueue.setState((state) => ({ tasks: state.tasks.map((task) => (task.id === id ? { ...task, ...update } : task)) }));
+  schedulePersist();
+};
+
+/** Дебаунс-сохранение полного массива задач в IndexedDB (MINI-23). Изменения стору во время тика воркера частые. */
+function schedulePersist() {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    void saveTasks(useUploadQueue.getState().tasks).catch(() => {
+      // Неудачная запись (квота/недоступность IDB) не роняет воркер; квота показывается в enqueue
+    });
+  }, 300);
+}
 
 async function runTask(id: string) {
   const task = useUploadQueue.getState().tasks.find((candidate) => candidate.id === id);
@@ -114,6 +134,7 @@ async function kick() {
 
 export const useUploadQueue = create<UploadQueueApi>((set) => ({
   tasks: [],
+  quotaError: null,
 
   enqueue: (input) => {
     batchCounter += 1;
@@ -132,8 +153,9 @@ export const useUploadQueue = create<UploadQueueApi>((set) => ({
       createdAt: Date.now(),
       batch: batchCounter,
     };
-    set((state) => ({ tasks: [...state.tasks, task] }));
+    set((state) => ({ tasks: [...state.tasks, task], quotaError: null }));
     void kick();
+    schedulePersist();
   },
 
   retry: (id) => {
@@ -141,16 +163,66 @@ export const useUploadQueue = create<UploadQueueApi>((set) => ({
     void kick();
   },
 
-  remove: (id) => set((state) => ({ tasks: state.tasks.filter((task) => task.id !== id) })),
+  remove: (id) => {
+    set((state) => ({ tasks: state.tasks.filter((task) => task.id !== id) }));
+    schedulePersist();
+  },
 
   releaseBlob: (id) => patch(id, { blob: null }),
 
-  clearForReport: (reportId) =>
+  clearForReport: (reportId) => {
     set((state) => ({
       // Загруженные остаются (они уже в БД), недогруженные убираем: закрыли отчёт, выбор повторится
       tasks: state.tasks.filter((task) => task.reportId !== reportId || task.state === 'done'),
-    })),
+    }));
+    schedulePersist();
+  },
 }));
+
+/**
+ * Проверка квоты IndexedDB перед постановкой файла (MINI-23). На iOS WebView квота может быть маленькой.
+ * Возвращает текст ошибки, если хранилище переполнено (новые файлы не принимаем), или `null`.
+ */
+export async function checkUploadQuota(): Promise<string | null> {
+  if (typeof navigator === 'undefined' || !('storage' in navigator) || !navigator.storage?.estimate) {
+    return null;
+  }
+  try {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    if (quota > 0 && usage / quota > 0.95) {
+      return 'Хранилище переполнено. Удалите загруженные файлы и попробуйте снова';
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Запросить постоянное хранилище (если API доступно) — иначе браузер может вычистить IndexedDB. Не критично, молчим. */
+export async function requestPersistentStorage(): Promise<void> {
+  try {
+    if (navigator.storage?.persist) await navigator.storage.persist();
+  } catch {
+    // недоступно — игнорируем
+  }
+}
+
+/**
+ * Гидратация очереди при старте (MINI-23): восстановить задачи из IndexedDB и продолжить докачку.
+ * Задачи в `presigning/uploading/confirming` на момент закрытия Mini App возвращаются в `queued` (в S3 они не ушли
+ * целиком или confirm под вопросом), кроме `confirming` с известным `s3Key` — для неё сначала проверка через `GET`
+ * (правило MINI-10) делается внутри `uploadMedia` при повторе. Вызывается один раз после старта приложения.
+ */
+export async function hydrateUploadQueue(): Promise<void> {
+  const stored = await loadTasks();
+  if (stored.length === 0) return;
+  const recovered = stored.map((task) =>
+    isActive(task) ? { ...task, state: 'queued' as UploadTaskState, resume: undefined, progress: 0, nextAttemptAt: undefined } : task,
+  );
+  useUploadQueue.setState({ tasks: recovered, quotaError: null });
+  await requestPersistentStorage();
+  void kick();
+}
 
 /** Возобновление загрузки при появлении сети и возврате в приложение. `kick` идемпотентен, лишние вызовы безопасны. */
 export function useUploadQueueResume() {

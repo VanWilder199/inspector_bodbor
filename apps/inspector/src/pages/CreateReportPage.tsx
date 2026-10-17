@@ -6,8 +6,8 @@ import { getErrorMessage } from '@/api/errors';
 import { FallbackMainButton } from '@/components/FallbackMainButton';
 import { carTitleFromAvbyUrl } from '@/features/reports/carTitle';
 import { readReportsIndex } from '@/features/reports/reportsIndex';
+import { useOffline } from '@/network/networkStore';
 import { useCreateReport } from '@/features/reports/useCreateReport';
-import { useOnline } from '@/features/reports/useOnline';
 import { AVBY_URL_PROBLEM_MESSAGES, normalizeAvbyUrl } from '@/features/reports/avbyUrl';
 import { useHaptic } from '@/telegram/useHaptic';
 import { useMainButton } from '@/telegram/useMainButton';
@@ -45,7 +45,7 @@ function initialInput(searchParams: URLSearchParams): { value: string; fromBot: 
 export function CreateReportPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const online = useOnline();
+  const offline = useOffline();
   const haptic = useHaptic();
   const createReport = useCreateReport();
 
@@ -129,7 +129,7 @@ export function CreateReportPage() {
   }
 
   const pending = createReport.isPending;
-  useMainButton(pending ? LOADING_TEXT : SUBMIT_TEXT, () => void submit(), { enabled: online && !pending, loading: pending });
+  useMainButton(pending ? LOADING_TEXT : SUBMIT_TEXT, () => void submit(), { enabled: !offline && !pending, loading: pending });
 
   return (
     <main style={{ padding: 16 }}>
@@ -178,7 +178,7 @@ export function CreateReportPage() {
           <Text style={{ display: 'block', margin: '12px 16px', color: HINT_COLOR }}>Ссылка пришла от бота — проверьте, что объявление то самое.</Text>
         )}
 
-        {!online && (
+        {offline && (
           <Text role="alert" style={{ display: 'block', margin: '12px 16px', color: HINT_COLOR }}>
             Нет связи с интернетом. Создание отчёта требует сети — подключитесь и попробуйте снова.
           </Text>
@@ -209,7 +209,7 @@ export function CreateReportPage() {
         )}
 
         <div style={{ padding: '12px 16px' }}>
-          <FallbackMainButton text={pending ? LOADING_TEXT : SUBMIT_TEXT} enabled={online && !pending} loading={pending} />
+          <FallbackMainButton text={pending ? LOADING_TEXT : SUBMIT_TEXT} enabled={!offline && !pending} loading={pending} />
         </div>
       </form>
     </main>

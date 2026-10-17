@@ -15,7 +15,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { MediaKind } from '@/api/types';
 import type { MediaTag } from '@/features/reports/draft';
-import { useUploadQueue } from '@/media/uploadQueue';
+import { useUploadQueue, checkUploadQuota } from '@/media/uploadQueue';
 import { createPhotoInput, processPhotoFiles } from '@/media/photoPipeline';
 import { getPhotoErrorMessage, type ProcessedPhoto } from '@/media/photoProcessing';
 
@@ -68,10 +68,15 @@ export function usePhotoUpload() {
     input.click();
   }, []);
 
-  /** Подтвердить загрузку: поставить в очередь. Возвращает `null`, если нечего грузить. */
+  /** Подтвердить загрузку: проверить квоту и поставить в очередь. Возвращает `true`, если файл принят в очередь. */
   const confirm = useCallback(
-    (options: PickPhotoOptions) => {
-      if (!pending) return null;
+    async (options: PickPhotoOptions) => {
+      if (!pending) return false;
+      const quotaError = await checkUploadQuota();
+      if (quotaError) {
+        setError(quotaError);
+        return false;
+      }
       const { reportId, sectionId, kind, tag } = options;
       enqueue({
         reportId,

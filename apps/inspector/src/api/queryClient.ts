@@ -16,5 +16,14 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
 
 /** Клиент запросов приложения. Мутации (POST/PUT) по умолчанию не повторяются: что повторять, решает вызывающий код. */
 export function createQueryClient(): QueryClient {
-  return new QueryClient({ defaultOptions: { queries: { retry: shouldRetry } } });
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: shouldRetry,
+        // Оффлайн-устойчивость (MINI-21): запросы на чтение отдают закешированный ответ, если он есть,
+        // и не падают сразу при отсутствии сети (раздел 3.6)
+        networkMode: 'offlineFirst',
+      },
+    },
+  });
 }
