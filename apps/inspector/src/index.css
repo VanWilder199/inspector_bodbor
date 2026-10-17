@@ -1,0 +1,11 @@
+/*
+ * Tailwind нужен только для ReportView из @podbor/ui, остальной интерфейс — telegram-ui.
+ * Tailwind v4 кладёт свои стили в @layer, а стили telegram-ui идут без слоя и по каскаду выигрывают,
+ * поэтому сброс (preflight) Tailwind не ломает компоненты telegram-ui.
+ * Цвета фона и текста страницы здесь не задаются: их даст тема Telegram (--tg-theme-*, MINI-02).
+ */
+@import "tailwindcss";
+@import "@podbor/ui/theme.css";
+
+/* Компоненты из packages/ui лежат вне приложения — указываем Tailwind, где искать классы */
+@source "../../../packages/ui/src";

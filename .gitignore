@@ -1,0 +1,23 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+
+# локальные секреты и окружения
+.env
+.env.local
+.env.*.local
+.env.production
+
+# покрытие и отчёты
+coverage/
+
+# бот (python)
+bot/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# редакторы/ОС
+.DS_Store
+.idea/
